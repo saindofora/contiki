@@ -39,10 +39,15 @@
 #define DEBUG DEBUG_PRINT
 #include "net/ip/uip-debug.h"
 
-#define SEND_INTERVAL		15 * CLOCK_SECOND
+#define SEND_INTERVAL		5 * CLOCK_SECOND
 #define MAX_PAYLOAD_LEN		40
 #define CONN_PORT     8802
 #define MDNS 0
+
+#define LED_TOGGLE_REQUEST (0x79)
+#define LED_SET_STATE (0x7A)
+#define LED_GET_STATE (0x7B)
+#define LED_STATE (0x7C)
 
 static char buf[MAX_PAYLOAD_LEN];
 
@@ -55,29 +60,75 @@ static struct uip_udp_conn *client_conn;
 PROCESS(udp_client_process, "UDP client process");
 AUTOSTART_PROCESSES(&resolv_process,&udp_client_process);
 /*---------------------------------------------------------------------------*/
-static void
-tcpip_handler(void)
-{
-    char *dados;
+//static void
+//tcpip_handler(void)
+//{
+//    char *dados;
 
-    if(uip_newdata()) {
-        dados = uip_appdata;
-        dados[uip_datalen()] = '\0';
-        printf("Response from the server: '%s'\n", dados);
+//    if(uip_newdata()) {
+//        dados = uip_appdata;
+//        dados[uip_datalen()] = '\0';
+//        printf("Response from the server: '%s'\n", dados);
+//    }
+//}
+/*---------------------------------------------------------------------------*/
+static void
+tcpip_handler(void) {
+    char i=0;
+    #define SEND_ECHO (0xBA)
+
+    if(uip_newdata()) { // verifica se novos dados foram recebidos
+
+        char* dados = ((char)uip_appdata);
+        PRINTF("Recebidos %d bytes\n", uip_datalen());
+
+        // Alterar o estado dos leds conforme resposta
+        leds_toggle(dados[1]);
+
+        switch (dados[0]) {
+        case SEND_ECHO: {
+            uip_ipaddr_copy(&client_conn->ripaddr, &UIP_IP_BUF->srcipaddr);
+            client_conn->rport = UIP_UDP_BUF->destport;
+            uip_udp_packet_send(client_conn, dados, uip_datalen());
+
+            PRINTF("Enviado eco para [");
+            PRINT6ADDR(&client_conn->ripaddr);
+            PRINTF("]:%u\n", UIP_HTONS(client_conn->rport));
+            break;
+        }
+        case LED_SET_STATE: {
+            leds_toggle(dados[1]);
+            break;
+        }
+        default: {
+            PRINTF("Comando invalido");
+            for(i=0;i<uip_datalen();i++) {
+                PRINTF("0x%02X ", dados[i]);
+            }
+            PRINTF("\n");
+            break;
+        }
+        }
     }
+    return;
 }
 /*---------------------------------------------------------------------------*/
 static void
 timeout_handler(void)
 {
-    char payload = 0;
+    char payload = LED_TOGGLE_REQUEST;
 
     buf[0] = payload;
     if(uip_ds6_get_global(ADDR_PREFERRED) == NULL) {
       PRINTF("Aguardando auto-configuracao de IP\n");
       return;
     }
-    uip_udp_packet_send(client_conn, buf, strlen(buf));
+
+    uip_udp_packet_send(client_conn, buf, sizeof(payload));
+
+    PRINTF("Cliente para [");
+    PRINT6ADDR(&client_conn->ripaddr);
+    PRINTF("]:%u\n", UIP_HTONS(client_conn->rport));
 }
 /*---------------------------------------------------------------------------*/
 static void
@@ -163,9 +214,9 @@ PROCESS_THREAD(udp_client_process, ev, data)
   PROCESS_BEGIN();
   PRINTF("UDP client process started\n");
 
-#if UIP_CONF_ROUTER
-  set_global_address();
-#endif
+    #if UIP_CONF_ROUTER
+      set_global_address();
+    #endif
 
   print_local_addresses();
 
@@ -183,11 +234,11 @@ PROCESS_THREAD(udp_client_process, ev, data)
   }
 #else
   //c_onfigures the destination IPv6 address
-  uip_ip6addr(&ipaddr, 0xfe80, 0, 0, 0, 0x215, 0x2000, 0x0002, 0x2145);
+  uip_ip6addr(&ipaddr, 0xfd00, 0, 0, 0, 0x0212, 0x4b00, 0x0791, 0xb681);
 #endif
   /* new connection with remote host */
-  client_conn = udp_new(&ipaddr, UIP_HTONS(CONN_PORT), NULL);
-  udp_bind(client_conn, UIP_HTONS(CONN_PORT));
+  client_conn = udp_new(&ipaddr, UIP_HTONS(8802), NULL);
+  udp_bind(client_conn, UIP_HTONS(8802));
 
   PRINT6ADDR(&client_conn->ripaddr);
   PRINTF(" local/remote port %u/%u\n",
